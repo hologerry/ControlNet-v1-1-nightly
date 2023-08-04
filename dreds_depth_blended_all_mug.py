@@ -264,10 +264,10 @@ def main(args):
         "a glass mug on table",
         "a plastic mug on table",
         "a transparent mug on table",
-        "a mug on table with water, label and cap",
-        "a glass mug on table with water, label and cap",
-        "a plastic mug on table with water, label and cap",
-        "a transparent mug on table with water, label and cap",
+        "a mug on table with water, label",
+        "a glass mug on table with water, label",
+        "a plastic mug on table with water, label",
+        "a transparent mug on table with water, label",
     ]
 
     with open(args.pair_filenames_json, "r") as f:
