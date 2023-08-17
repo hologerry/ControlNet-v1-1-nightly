@@ -60,7 +60,7 @@ def one_image_batch(
     img = resize_image(input_image, image_resolution)
     H, W, C = img.shape
 
-    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
+    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_NEAREST)
 
     control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
     control = torch.stack([control for _ in range(num_samples)], dim=0)

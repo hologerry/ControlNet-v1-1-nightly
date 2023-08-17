@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import random
 
@@ -11,7 +10,6 @@ import torch
 from PIL import Image
 from pytorch_lightning import seed_everything
 from scipy.ndimage import binary_dilation
-from tqdm import tqdm
 
 import config
 
@@ -37,7 +35,7 @@ def normalize_depth(depth):
 
 def read_image(img_path: str, dest_size=(512, 512)):
     image = Image.open(img_path).convert("RGB")
-    image = image.resize(dest_size, Image.LANCZOS)
+    image = image.resize(dest_size, Image.NEAREST)
     image = np.array(image)
     image = image.astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
@@ -62,7 +60,7 @@ def read_mask(mask_path: str, dilation_radius: int = 0, dest_size=(64, 64), img_
     masks_array = masks_array[:, np.newaxis, :]
     masks_array = torch.from_numpy(masks_array).cuda()
 
-    org_mask = org_mask.resize(img_size, Image.LANCZOS)
+    org_mask = org_mask.resize(img_size, Image.NEAREST)
     org_mask = np.array(org_mask).astype(np.float32) / 255.0
     org_mask = org_mask[None, None]
     org_mask[org_mask < 0.5] = 0
@@ -80,6 +78,10 @@ def one_image_batch(
     depth,
     mask,
     org_mask,
+    detect_resolution,
+    image_resolution,
+    low_threshold,
+    high_threshold,
     num_samples,
     ddim_steps,
     guess_mode,
@@ -100,7 +102,7 @@ def one_image_batch(
     H, W = init_image.shape[2:]
 
     detected_map = HWC3(depth)
-    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
+    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_NEAREST)
     control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
     control = torch.stack([control for _ in range(num_samples)], dim=0)
     control = einops.rearrange(control, "b h w c -> b c h w").clone()
@@ -159,34 +161,31 @@ def one_image_batch(
     return results
 
 
-def save_samples(init_image, depth, mask, org_mask, prompt_idx, results, output_dir, img_basename):
-    # the img_basename contains the subfolder name
-    true_dir = os.path.dirname(os.path.join(output_dir, img_basename))
-    os.makedirs(true_dir, exist_ok=True)
-    if prompt_idx == 0:
-        # save the input only once
-        image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
-        image = image.clip(0, 255).astype(np.uint8)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+def save_samples(init_image, depth, mask, org_mask, output, output_dir, img_basename):
+    results = output
 
-        mask_image = mask[0].permute(1, 2, 0).cpu().numpy() * 255
-        mask_image = mask_image.clip(0, 255).astype(np.uint8)
-        mask_image = cv2.cvtColor(mask_image, cv2.COLOR_GRAY2BGR)
+    image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
+    image = image.clip(0, 255).astype(np.uint8)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        org_mask_image = org_mask[0].permute(1, 2, 0).cpu().numpy() * 255
-        org_mask_image = org_mask_image.clip(0, 255).astype(np.uint8)
-        org_mask_image = cv2.cvtColor(org_mask_image, cv2.COLOR_GRAY2BGR)
+    mask_image = mask[0].permute(1, 2, 0).cpu().numpy() * 255
+    mask_image = mask_image.clip(0, 255).astype(np.uint8)
+    mask_image = cv2.cvtColor(mask_image, cv2.COLOR_GRAY2BGR)
 
-        depth = cv2.cvtColor(depth, cv2.COLOR_GRAY2BGR)
+    org_mask_image = org_mask[0].permute(1, 2, 0).cpu().numpy() * 255
+    org_mask_image = org_mask_image.clip(0, 255).astype(np.uint8)
+    org_mask_image = cv2.cvtColor(org_mask_image, cv2.COLOR_GRAY2BGR)
 
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_color.png"), image)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_norm_depth.png"), depth)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_mask.png"), mask_image)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_org_mask.png"), org_mask_image)
+    depth = cv2.cvtColor(depth, cv2.COLOR_GRAY2BGR)
+
+    cv2.imwrite(os.path.join(output_dir, f"{img_basename}.png"), image)
+    cv2.imwrite(os.path.join(output_dir, f"{img_basename}_norm_depth.png"), depth)
+    cv2.imwrite(os.path.join(output_dir, f"{img_basename}_mask.png"), mask_image)
+    cv2.imwrite(os.path.join(output_dir, f"{img_basename}_org_mask.png"), org_mask_image)
 
     for i, result in enumerate(results):
         img = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_prompt{prompt_idx}_{i}.png"), img)
+        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_{i}.png"), img)
 
 
 def main(args):
@@ -212,105 +211,63 @@ def main(args):
 
     ddim_sampler = DDIMSampler(model)
 
-    prompts = [
-        "a bottle on table",
-        "a glass bottle on table",
-        "a plastic bottle on table",
-        "a transparent bottle on table",
-        "a bottle on table with water, label and cap",
-        "a glass bottle on table with water, label and cap",
-        "a plastic bottle on table with water, label and cap",
-        "a transparent bottle on table with water, label and cap",
-    ]
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    with open(args.all_image_mask_depth_filenames, "r") as f:
-        all_image_mask_depth_dict = json.load(f)
+    img_basename = os.path.basename(args.img_path).split(".")[0]
 
-    data_root_path = "../data/NOCS/"
-    splits = ["train", "val", "real_train", "real_test"]
+    init_image = read_image(args.img_path)
+    mask, org_mask = read_mask(args.mask_path, args.dilation_radius)
 
-    for split in splits:
-        cur_split_path = os.path.join(data_root_path, f"{split}_image_mask_depth")
-        cur_split_output_path = os.path.join(data_root_path, f"{split}_blended_controlnet_output")
-        cur_split_image_mask_depth_pairs = all_image_mask_depth_dict[split]
+    depth_path = os.path.join(args.depth_path)
+    depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)  # 16bit, millimeters
+    depth_image = normalize_depth(depth)
 
-        cur_job_pairs = cur_split_image_mask_depth_pairs[args.part_idx :: args.part_num]
-
-        for pair in tqdm(
-            cur_job_pairs, desc=f"Job {args.job_idx} part [{args.part_idx}/{args.part_num}] Processing {split} "
-        ):
-            # filename already contains the subfolder name
-            color_filename = pair["color_filename"]
-            mask_filename = pair["mask_filename"]
-            depth_filename = pair["depth_filename"]
-            base_filename = color_filename.replace("_color", "").replace(".png", "")
-            color_path = os.path.join(cur_split_path, color_filename)
-            mask_path = os.path.join(cur_split_path, mask_filename)
-            depth_path = os.path.join(cur_split_path, depth_filename)
-
-            init_image = read_image(color_path)
-            mask, org_mask = read_mask(mask_path, args.dilation_radius)
-
-            depth_path = os.path.join(depth_path)
-            depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)  # 16bit, millimeters
-            depth_image = normalize_depth(depth)
-
-            for prompt_idx in range(len(prompts)):
-                cur_prompt = prompts[prompt_idx]
-                results = one_image_batch(
-                    model=model,
-                    ddim_sampler=ddim_sampler,
-                    init_image=init_image,
-                    depth=depth_image,
-                    mask=mask,
-                    org_mask=org_mask,
-                    num_samples=args.num_samples,
-                    ddim_steps=20,
-                    guess_mode=False,
-                    strength=1.0,
-                    scale=9.0,
-                    seed=12345,
-                    eta=1.0,
-                    prompt=cur_prompt,
-                    a_prompt="best quality",
-                    n_prompt="lowres, bad anatomy, bad hands, cropped, worst quality",
-                    config=config,
-                    skip_steps=0,
-                    percentage_of_pixel_blending=args.percentage_of_pixel_blending,
-                )
-                save_samples(
-                    init_image, depth_image, mask, org_mask, prompt_idx, results, cur_split_output_path, base_filename
-                )
+    output = one_image_batch(
+        model=model,
+        ddim_sampler=ddim_sampler,
+        init_image=init_image,
+        depth=depth_image,
+        mask=mask,
+        org_mask=org_mask,
+        detect_resolution=512,
+        image_resolution=512,
+        low_threshold=100,
+        high_threshold=200,
+        num_samples=args.num_samples,
+        ddim_steps=20,
+        guess_mode=False,
+        strength=1.0,
+        scale=9.0,
+        seed=12345,
+        eta=1.0,
+        prompt=args.prompt,
+        a_prompt="best quality",
+        n_prompt="lowres, bad anatomy, bad hands, cropped, worst quality",
+        config=config,
+        skip_steps=0,
+        percentage_of_pixel_blending=args.percentage_of_pixel_blending,
+    )
+    save_samples(init_image, depth_image, mask, org_mask, output, args.output_dir, img_basename)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="A parser for NOCS")
 
+    parser.add_argument("--img_path", type=str, default="", required=True)
+    parser.add_argument("--depth_path", type=str, default="", required=True)
+    parser.add_argument("--mask_path", type=str, default="", required=True)
+    parser.add_argument("--output_dir", type=str, default="./nocs_output/", required=True)
+
     parser.add_argument("--sd", type=str, default="15")
     parser.add_argument("--zoe", action="store_true", default=False)
 
-    parser.add_argument("--dilation_radius", type=int, default=1)
+    parser.add_argument("--prompt", type=str, default="", required=True)
+
+    parser.add_argument("--dilation_radius", type=int, default=0)
     parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
 
-    parser.add_argument("--num_samples", type=int, default=8)
+    parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--debug", action="store_true", default=False)
-
-    parser.add_argument(
-        "--all_image_mask_depth_filenames", type=str, default="../data/NOCS/nocs_bottle_image_mask_depth_files.json"
-    )
-
-    parser.add_argument("--job_idx", type=int, default=0)
-    parser.add_argument("--job_num", type=int, default=1)
-    parser.add_argument("--gpu_idx", type=int, default=0)
-    parser.add_argument("--gpu_num", type=int, default=8)
-    parser.add_argument("--part_idx", type=int, default=0)
-    parser.add_argument("--part_num", type=int, default=1)
-
     args = parser.parse_args()
-
-    assert args.job_idx < args.job_num
-    assert args.gpu_idx < args.gpu_num
-    args.part_num = args.job_num * args.gpu_num
-    args.part_idx = args.job_idx * args.gpu_num + args.gpu_idx
 
     main(args)

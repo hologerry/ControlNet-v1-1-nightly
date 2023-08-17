@@ -36,11 +36,13 @@ def normalize_depth(depth):
 
 
 def read_image(img_path: str, dest_size=(512, 512)):
-    image = Image.open(img_path).convert("RGB")
-    w, h = image.size
-    if w != dest_size[0] or h != dest_size[1]:
-        image = image.resize(dest_size, Image.NEAREST)
-    image = np.array(image)
+    image = cv2.imread(img_path)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    h, w = image.shape[:2]
+    if w > dest_size[0] or h > dest_size[1]:
+        image = cv2.resize(image, dest_size, interpolation=cv2.INTER_AREA)
+    elif w < dest_size[0] or h < dest_size[1]:
+        image = cv2.resize(image, dest_size, interpolation=cv2.INTER_CUBIC)
     image = image.astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
     image = torch.from_numpy(image).cuda()
@@ -268,20 +270,22 @@ def main(args):
         "a transparent bottle on table with water, label and cap",
     ]
 
-    with open(args.all_image_mask_depth_filenames, "r") as f:
+    with open(args.pair_filenames_json, "r") as f:
         all_image_mask_depth_dict = json.load(f)
 
-    data_root_path = "../data/NOCS/"
-    splits = ["train", "val", "real_train", "real_test"]
+    data_root_path = "../data/DREDS/DREDS-CatKnown"
+    splits = ["train", "val", "test"]
     if args.debug:
         splits = ["val"]
 
     for split in splits:
-        cur_split_path = os.path.join(data_root_path, f"{split}_image_mask_depth_pair")
-        cur_split_output_path = os.path.join(data_root_path, f"{split}_bc_output_rand")
-        cur_split_image_mask_depth_pairs = all_image_mask_depth_dict[split]
+        cur_split_path = os.path.join(data_root_path, f"{split}_pair")
+        cur_split_output_path = os.path.join(
+            data_root_path, f"{split}_bc_bottle_dial{args.dilation_radius}_seed{args.seed}"
+        )
+        cur_split_pairs = all_image_mask_depth_dict[split]
 
-        cur_job_pairs = cur_split_image_mask_depth_pairs[args.part_idx :: args.part_num]
+        cur_job_pairs = cur_split_pairs[args.part_idx :: args.part_num]
         if args.sub_job_num > 0:
             cur_job_pairs = cur_job_pairs[args.sub_job_idx :: args.sub_job_num]
 
@@ -292,13 +296,16 @@ def main(args):
             # filename already contains the subfolder name
             color_filename = pair["color_filename"]
             mask_filename = pair["mask_filename"]
-            depth_filename = pair["depth_filename"]
-            base_filename = color_filename.replace("_color", "").replace(".png", "")
-            if current_sample_ok(args.num_samples, cur_split_output_path, base_filename):
+            depth_filename = pair["syn_depth_filename"]
+            out_base_filename = color_filename.replace("_color", "").replace(".png", "")
+            if current_sample_ok(args.num_samples, cur_split_output_path, out_base_filename):
                 continue
             color_path = os.path.join(cur_split_path, color_filename)
             mask_path = os.path.join(cur_split_path, mask_filename)
             depth_path = os.path.join(cur_split_path, depth_filename)
+            assert os.path.exists(color_path) and os.path.getsize(color_path) > 0, f"pair color_path {color_path} not ok"
+            assert os.path.exists(mask_path) and os.path.getsize(mask_path) > 0, f"pair mask_path {mask_path} not ok"
+            assert os.path.exists(depth_path) and os.path.getsize(depth_path) > 0, f"pair depth_path {depth_path} not ok"
 
             init_image = read_image(color_path)
             mask, org_mask = read_mask(mask_path, args.dilation_radius)
@@ -331,12 +338,12 @@ def main(args):
                     percentage_of_pixel_blending=args.percentage_of_pixel_blending,
                 )
                 save_samples(
-                    init_image, depth_image, mask, org_mask, prompt_idx, results, cur_split_output_path, base_filename
+                    init_image, depth_image, mask, org_mask, prompt_idx, results, cur_split_output_path, out_base_filename
                 )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="A parser for NOCS")
+    parser = argparse.ArgumentParser(description="A parser for DREDS")
 
     parser.add_argument("--sd", type=str, default="15")
     parser.add_argument("--zoe", action="store_true", default=False)
@@ -344,14 +351,14 @@ if __name__ == "__main__":
     parser.add_argument("--dilation_radius", type=int, default=1)
     parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
 
-    parser.add_argument("--num_samples", type=int, default=8)
+    parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
 
     parser.add_argument(
-        "--all_image_mask_depth_filenames",
+        "--pair_filenames_json",
         type=str,
-        default="../data/NOCS/nocs_bottle_image_mask_depth_pair_filenames.json",
+        default="../data/DREDS/DREDS-CatKnown/dreds_bottle_pair_filenames.json",
     )
 
     parser.add_argument("--job_idx", type=int, default=0)
