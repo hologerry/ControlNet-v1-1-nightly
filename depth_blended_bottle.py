@@ -264,26 +264,32 @@ def main(args):
         "a glass bottle on table",
         "a plastic bottle on table",
         "a transparent bottle on table",
-        "a bottle on table with water, label and cap",
-        "a glass bottle on table with water, label and cap",
-        "a plastic bottle on table with water, label and cap",
-        "a transparent bottle on table with water, label and cap",
+        "a bottle with label and cap, contains water, on table",
+        "a glass bottle with label and cap, contains water, on table",
+        "a plastic bottle with label and cap, contains water, on table",
+        "a transparent bottle with label and cap, contains water, on table",
     ]
 
-    with open(args.pair_filenames_json, "r") as f:
-        all_image_mask_depth_dict = json.load(f)
+    # data_root_path = "../data/DREDS/DREDS-CatKnown"
+    # splits = ["train", "val", "test"]
+    # pair_filenames_json = os.path.join(data_root_path, "dreds_mug_pair_filenames.json")
+    data_root_path = "../bot_render_output"
+    splits = ["train", "test"]
 
-    data_root_path = "../data/DREDS/DREDS-CatKnown"
-    splits = ["train", "val", "test"]
     if args.debug:
-        splits = ["val"]
+        # splits = ["val"]
+        splits = ["test"]
 
     for split in splits:
+        pair_filenames_json = os.path.join(data_root_path, f"bot_render_{split}_mug_pair_filenames.json")
+        with open(pair_filenames_json, "r") as f:
+            data_dict = json.load(f)
+
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
         cur_split_output_path = os.path.join(
-            data_root_path, f"{split}_bc_bottle_dial{args.dilation_radius}_seed{args.seed}"
+            data_root_path, f"{split}_bc_mug_dial{args.dilation_radius}_seed{args.seed}"
         )
-        cur_split_pairs = all_image_mask_depth_dict[split]
+        cur_split_pairs = data_dict[split]
 
         cur_job_pairs = cur_split_pairs[args.part_idx :: args.part_num]
         if args.sub_job_num > 0:
@@ -356,12 +362,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
-
-    parser.add_argument(
-        "--pair_filenames_json",
-        type=str,
-        default="../data/DREDS/DREDS-CatKnown/dreds_bottle_pair_filenames.json",
-    )
 
     parser.add_argument("--job_idx", type=int, default=0)
     parser.add_argument("--job_num", type=int, default=1)

@@ -264,26 +264,32 @@ def main(args):
         "a glass mug on table",
         "a plastic mug on table",
         "a transparent mug on table",
-        "a mug on table with water, label",
-        "a glass mug on table with water, label",
-        "a plastic mug on table with water, label",
-        "a transparent mug on table with water, label",
+        "a mug with label, contains water, on table",
+        "a glass mug with label, contains water, on table",
+        "a plastic mug with label, contains water, on table",
+        "a transparent mug with label, contains water, on table",
     ]
 
-    with open(args.pair_filenames_json, "r") as f:
-        all_image_mask_depth_dict = json.load(f)
+    # data_root_path = "../data/DREDS/DREDS-CatKnown"
+    # splits = ["train", "val", "test"]
+    # pair_filenames_json = os.path.join(data_root_path, "dreds_mug_pair_filenames.json")
+    data_root_path = "../bot_render_output"
+    splits = ["train", "test"]
 
-    data_root_path = "../data/DREDS/DREDS-CatKnown"
-    splits = ["train", "val", "test"]
     if args.debug:
-        splits = ["val"]
+        # splits = ["val"]
+        splits = ["test"]
 
     for split in splits:
+        pair_filenames_json = os.path.join(data_root_path, f"bot_render_{split}_mug_pair_filenames.json")
+        with open(pair_filenames_json, "r") as f:
+            data_dict = json.load(f)
+
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
         cur_split_output_path = os.path.join(
             data_root_path, f"{split}_bc_mug_dial{args.dilation_radius}_seed{args.seed}"
         )
-        cur_split_pairs = all_image_mask_depth_dict[split]
+        cur_split_pairs = data_dict[split]
 
         cur_job_pairs = cur_split_pairs[args.part_idx :: args.part_num]
         if args.sub_job_num > 0:
@@ -303,9 +309,13 @@ def main(args):
             color_path = os.path.join(cur_split_path, color_filename)
             mask_path = os.path.join(cur_split_path, mask_filename)
             depth_path = os.path.join(cur_split_path, depth_filename)
-            assert os.path.exists(color_path) and os.path.getsize(color_path) > 0, f"pair color_path {color_path} not ok"
+            assert (
+                os.path.exists(color_path) and os.path.getsize(color_path) > 0
+            ), f"pair color_path {color_path} not ok"
             assert os.path.exists(mask_path) and os.path.getsize(mask_path) > 0, f"pair mask_path {mask_path} not ok"
-            assert os.path.exists(depth_path) and os.path.getsize(depth_path) > 0, f"pair depth_path {depth_path} not ok"
+            assert (
+                os.path.exists(depth_path) and os.path.getsize(depth_path) > 0
+            ), f"pair depth_path {depth_path} not ok"
 
             init_image = read_image(color_path)
             mask, org_mask = read_mask(mask_path, args.dilation_radius)
@@ -338,7 +348,14 @@ def main(args):
                     percentage_of_pixel_blending=args.percentage_of_pixel_blending,
                 )
                 save_samples(
-                    init_image, depth_image, mask, org_mask, prompt_idx, results, cur_split_output_path, out_base_filename
+                    init_image,
+                    depth_image,
+                    mask,
+                    org_mask,
+                    prompt_idx,
+                    results,
+                    cur_split_output_path,
+                    out_base_filename,
                 )
 
 
@@ -354,12 +371,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
-
-    parser.add_argument(
-        "--pair_filenames_json",
-        type=str,
-        default="../data/DREDS/DREDS-CatKnown/dreds_mug_pair_filenames.json",
-    )
 
     parser.add_argument("--job_idx", type=int, default=0)
     parser.add_argument("--job_num", type=int, default=1)
