@@ -309,13 +309,15 @@ def main(args):
             color_path = os.path.join(cur_split_path, color_filename)
             mask_path = os.path.join(cur_split_path, mask_filename)
             depth_path = os.path.join(cur_split_path, depth_filename)
-            assert (
-                os.path.exists(color_path) and os.path.getsize(color_path) > 0
-            ), f"pair color_path {color_path} not ok"
-            assert os.path.exists(mask_path) and os.path.getsize(mask_path) > 0, f"pair mask_path {mask_path} not ok"
-            assert (
-                os.path.exists(depth_path) and os.path.getsize(depth_path) > 0
-            ), f"pair depth_path {depth_path} not ok"
+            if os.path.exists(color_path) or os.path.getsize(color_path) == 0:
+                print(f"pair color_path {color_path} not ok")
+                continue
+            if os.path.exists(mask_path) or os.path.getsize(mask_path) == 0:
+                print(f"pair mask_path {mask_path} not ok")
+                continue
+            if os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
+                print(f"pair depth_path {depth_path} not ok")
+                continue
 
             init_image = read_image(color_path)
             mask, org_mask = read_mask(mask_path, args.dilation_radius)
