@@ -287,7 +287,7 @@ def main(args):
 
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
         cur_split_output_path = os.path.join(
-            data_root_path, f"{split}_bc_mug_dial{args.dilation_radius}_seed{args.seed}"
+            data_root_path, f"{split}_bc_bottle_dial{args.dilation_radius}_seed{args.seed}"
         )
         cur_split_pairs = data_dict[split]
 
