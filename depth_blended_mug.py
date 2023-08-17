@@ -309,13 +309,13 @@ def main(args):
             color_path = os.path.join(cur_split_path, color_filename)
             mask_path = os.path.join(cur_split_path, mask_filename)
             depth_path = os.path.join(cur_split_path, depth_filename)
-            if os.path.exists(color_path) or os.path.getsize(color_path) == 0:
+            if not os.path.exists(color_path) or os.path.getsize(color_path) == 0:
                 print(f"pair color_path {color_path} not ok")
                 continue
-            if os.path.exists(mask_path) or os.path.getsize(mask_path) == 0:
+            if not os.path.exists(mask_path) or os.path.getsize(mask_path) == 0:
                 print(f"pair mask_path {mask_path} not ok")
                 continue
-            if os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
+            if not os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
                 print(f"pair depth_path {depth_path} not ok")
                 continue
 
