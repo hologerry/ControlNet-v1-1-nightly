@@ -281,7 +281,7 @@ def main(args):
         splits = ["test"]
 
     for split in splits:
-        pair_filenames_json = os.path.join(data_root_path, f"bot_render_{split}_mug_pair_filenames.json")
+        pair_filenames_json = os.path.join(data_root_path, f"bot_render_{split}_bottle_pair_filenames.json")
         with open(pair_filenames_json, "r") as f:
             data_dict = json.load(f)
 
