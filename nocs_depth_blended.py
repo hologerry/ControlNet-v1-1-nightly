@@ -37,6 +37,7 @@ def normalize_depth(depth):
 
 def read_image(img_path: str, dest_size=(512, 512)):
     image = Image.open(img_path).convert("RGB")
+
     w, h = image.size
     if w != dest_size[0] or h != dest_size[1]:
         image = image.resize(dest_size, Image.NEAREST)

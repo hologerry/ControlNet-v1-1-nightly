@@ -260,14 +260,14 @@ def main(args):
     ddim_sampler = DDIMSampler(model)
 
     prompts = [
-        "a bottle on table",
-        "a glass bottle on table",
-        "a plastic bottle on table",
-        "a transparent bottle on table",
-        "a bottle on table with water, label and cap",
-        "a glass bottle on table with water, label and cap",
-        "a plastic bottle on table with water, label and cap",
-        "a transparent bottle on table with water, label and cap",
+        "a mug on table",
+        "a glass mug on table",
+        "a plastic mug on table",
+        "a transparent mug on table",
+        "a mug on table with water, label",
+        "a glass mug on table with water, label",
+        "a plastic mug on table with water, label",
+        "a transparent mug on table with water, label",
     ]
 
     with open(args.pair_filenames_json, "r") as f:
@@ -281,7 +281,7 @@ def main(args):
     for split in splits:
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
         cur_split_output_path = os.path.join(
-            data_root_path, f"{split}_bc_bottle_dial{args.dilation_radius}_seed{args.seed}"
+            data_root_path, f"{split}_bc_mug_dial{args.dilation_radius}_seed{args.seed}"
         )
         cur_split_pairs = all_image_mask_depth_dict[split]
 
@@ -296,7 +296,6 @@ def main(args):
             # filename already contains the subfolder name
             color_filename = pair["color_filename"]
             mask_filename = pair["mask_filename"]
-
             depth_filename = pair["syn_depth_filename"]
             out_base_filename = color_filename.replace("_color", "").replace(".png", "")
             if current_sample_ok(args.num_samples, cur_split_output_path, out_base_filename):
@@ -353,14 +352,13 @@ if __name__ == "__main__":
     parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
 
     parser.add_argument("--num_samples", type=int, default=4)
-
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
 
     parser.add_argument(
         "--pair_filenames_json",
         type=str,
-        default="../data/DREDS/DREDS-CatKnown/dreds_bottle_pair_filenames.json",
+        default="../data/DREDS/DREDS-CatKnown/dreds_mug_pair_filenames.json",
     )
 
     parser.add_argument("--job_idx", type=int, default=0)

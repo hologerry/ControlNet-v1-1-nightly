@@ -296,7 +296,6 @@ def main(args):
             # filename already contains the subfolder name
             color_filename = pair["color_filename"]
             mask_filename = pair["mask_filename"]
-
             depth_filename = pair["syn_depth_filename"]
             out_base_filename = color_filename.replace("_color", "").replace(".png", "")
             if current_sample_ok(args.num_samples, cur_split_output_path, out_base_filename):
@@ -353,7 +352,6 @@ if __name__ == "__main__":
     parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
 
     parser.add_argument("--num_samples", type=int, default=4)
-
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
 
