@@ -22,20 +22,6 @@ from cldm.model import create_model, load_state_dict
 from share import *
 
 
-# def normalize_depth(depth):
-#     depth_norm = np.copy(depth)
-#     depth_norm = depth_norm / 1000.0
-#     vmin = np.percentile(depth_norm, 2)
-#     vmax = np.percentile(depth_norm, 85)
-
-#     depth_norm -= vmin
-#     depth_norm /= vmax - vmin
-#     depth_norm = 1.0 - depth_norm
-#     depth_image = (depth_norm * 255.0).clip(0, 255).astype(np.uint8)
-
-#     return depth_image
-
-
 def read_image(img_path: str, dest_size=(512, 512)):
     image = cv2.imread(img_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -44,53 +30,17 @@ def read_image(img_path: str, dest_size=(512, 512)):
         image = cv2.resize(image, dest_size, interpolation=cv2.INTER_AREA)
     elif w < dest_size[0] or h < dest_size[1]:
         image = cv2.resize(image, dest_size, interpolation=cv2.INTER_CUBIC)
-    image = image.astype(np.float32) / 255.0
-    image = image[None].transpose(0, 3, 1, 2)
-    image = torch.from_numpy(image).cuda()
-
-    image = image * 2.0 - 1.0
 
     return image
-
-
-# def read_mask(mask_path: str, dilation_radius: int = 0, dest_size=(64, 64), img_size=(512, 512)):
-#     org_mask = Image.open(mask_path).convert("L")
-#     mask = org_mask.copy()
-#     w, h = mask.size
-#     if w != dest_size[0] or h != dest_size[1]:
-#         mask = mask.resize(dest_size, Image.NEAREST)
-#     mask = np.array(mask) / 255
-
-#     if dilation_radius > 0:
-#         k_size = 1 + 2 * dilation_radius
-#         masks_array = [binary_dilation(mask, structure=np.ones((k_size, k_size)))]
-#     else:
-#         masks_array = [mask]
-#     masks_array = np.array(masks_array).astype(np.float32)
-#     masks_array = masks_array[:, np.newaxis, :]
-#     masks_array = torch.from_numpy(masks_array).cuda()
-
-#     if w != img_size[0] or h != img_size[1]:
-#         org_mask = org_mask.resize(img_size, Image.NEAREST)
-
-#     org_mask = np.array(org_mask).astype(np.float32) / 255.0
-#     org_mask = org_mask[None, None]
-#     org_mask[org_mask < 0.5] = 0
-#     org_mask[org_mask >= 0.5] = 1
-#     org_mask = torch.from_numpy(org_mask).cuda()
-
-#     return masks_array, org_mask
 
 
 @torch.no_grad()
 def one_image_batch(
     model,
     ddim_sampler,
-    init_image,
-    preprocessor,
+    image,
+    detected_map,
     num_samples,
-    image_resolution,
-    detect_resolution,
     ddim_steps,
     guess_mode,
     strength,
@@ -101,21 +51,8 @@ def one_image_batch(
     a_prompt,
     n_prompt,
     config,
-    skip_steps,
-    percentage_of_pixel_blending,
 ):
-    init_image_batch = torch.cat([init_image for _ in range(num_samples)], dim=0)
-    H, W = init_image.shape[2:]
-
-    input_image = HWC3(init_image)
-    detected_map = preprocessor(resize_image(input_image, detect_resolution))
-    detected_map = HWC3(detected_map)
-
-    img = resize_image(input_image, image_resolution)
-    H, W, C = img.shape
-
-    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
-
+    H, W, C = image.shape
     control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
     control = torch.stack([control for _ in range(num_samples)], dim=0)
     control = einops.rearrange(control, "b h w c -> b c h w").clone()
@@ -154,8 +91,6 @@ def one_image_batch(
         eta=eta,
         unconditional_guidance_scale=scale,
         unconditional_conditioning=un_cond,
-        skip_steps=skip_steps,
-        percentage_of_pixel_blending=percentage_of_pixel_blending,
     )
 
     if config.save_memory:
@@ -171,30 +106,20 @@ def one_image_batch(
     return results
 
 
-def save_samples(init_image, depth, mask, org_mask, prompt_idx, results, output_dir, img_basename):
+def save_samples(init_image, detected_map, num_prompts, prompt_idx, results, output_dir, img_basename):
     # the img_basename contains the subfolder name
     true_dir = os.path.dirname(os.path.join(output_dir, img_basename))
     os.makedirs(true_dir, exist_ok=True)
     if prompt_idx == 0:
         # save the input only once
-        image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
-        image = image.clip(0, 255).astype(np.uint8)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        # image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
+        # image = image.clip(0, 255).astype(np.uint8)
+        image = cv2.cvtColor(init_image, cv2.COLOR_RGB2BGR)
 
-        mask_image = mask[0].permute(1, 2, 0).cpu().numpy() * 255
-        mask_image = mask_image.clip(0, 255).astype(np.uint8)
-        mask_image = cv2.cvtColor(mask_image, cv2.COLOR_GRAY2BGR)
-
-        org_mask_image = org_mask[0].permute(1, 2, 0).cpu().numpy() * 255
-        org_mask_image = org_mask_image.clip(0, 255).astype(np.uint8)
-        org_mask_image = cv2.cvtColor(org_mask_image, cv2.COLOR_GRAY2BGR)
-
-        depth = cv2.cvtColor(depth, cv2.COLOR_GRAY2BGR)
+        detected = cv2.cvtColor(detected_map, cv2.COLOR_RGB2BGR)
 
         cv2.imwrite(os.path.join(output_dir, f"{img_basename}_color.png"), image)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_norm_depth.png"), depth)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_mask.png"), mask_image)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_org_mask.png"), org_mask_image)
+        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_det_mask.png"), detected)
 
     for i, result in enumerate(results):
         img = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
@@ -212,7 +137,7 @@ def file_ok(file_path):
     return True
 
 
-def current_sample_ok(num_samples, output_dir, img_basename):
+def current_sample_ok(num_prompts, num_samples, output_dir, img_basename):
     image_path = os.path.join(output_dir, f"{img_basename}_color.png")
     if not file_ok(image_path):
         print(f"image_path {image_path} not ok")
@@ -229,7 +154,7 @@ def current_sample_ok(num_samples, output_dir, img_basename):
     # if not file_ok(org_mask_image_path):
     #     print(f"org_mask_image_path {org_mask_image_path} not ok")
     #     return False
-    for prompt_idx in range(4):
+    for prompt_idx in range(num_prompts):
         for i in range(num_samples):
             res_img_path = os.path.join(output_dir, f"{img_basename}_prompt{prompt_idx}_{i}.png")
             if not file_ok(res_img_path):
@@ -274,6 +199,7 @@ def main(args):
         # "a plastic bottle with label and cap, contains water, on table",
         # "a transparent bottle with label and cap, contains water, on table",
     ]
+    num_prompts = len(prompts)
 
     # data_root_path = "../data/DREDS/DREDS-CatKnown"
     # splits = ["train", "val", "test"]
@@ -308,7 +234,7 @@ def main(args):
 
             # depth_filename = pair["syn_depth_filename"]
             out_base_filename = color_filename.replace("_color", "").replace(".png", "")
-            if current_sample_ok(args.num_samples, cur_split_output_path, out_base_filename):
+            if current_sample_ok(num_prompts, args.num_samples, cur_split_output_path, out_base_filename):
                 continue
             color_path = os.path.join(cur_split_path, color_filename)
             # mask_path = os.path.join(cur_split_path, mask_filename)
@@ -324,6 +250,16 @@ def main(args):
             #     continue
 
             init_image = read_image(color_path)
+
+            input_image = HWC3(init_image)
+            detected_map = preprocessor(resize_image(input_image, 512))
+            detected_map = HWC3(detected_map)
+
+            img = resize_image(input_image, 512)
+            H, W, C = img.shape
+
+            detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
+
             # mask, org_mask = read_mask(mask_path, args.dilation_radius)
 
             # depth_path = os.path.join(depth_path)
@@ -335,11 +271,9 @@ def main(args):
                 results = one_image_batch(
                     model=model,
                     ddim_sampler=ddim_sampler,
-                    init_image=init_image,
-                    preprocessor=preprocessor,
+                    image=img,
+                    detected_map=detected_map,
                     num_samples=args.num_samples,
-                    image_resolution=512,
-                    detect_resolution=512,
                     ddim_steps=20,
                     guess_mode=False,
                     strength=1.0,
@@ -350,11 +284,11 @@ def main(args):
                     a_prompt="best quality",
                     n_prompt="lowres, bad anatomy, bad hands, cropped, worst quality",
                     config=config,
-                    skip_steps=0,
-                    percentage_of_pixel_blending=args.percentage_of_pixel_blending,
                 )
                 save_samples(
                     init_image,
+                    detected_map,
+                    num_prompts,
                     prompt_idx,
                     results,
                     cur_split_output_path,

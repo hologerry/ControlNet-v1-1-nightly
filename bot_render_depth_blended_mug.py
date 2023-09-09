@@ -209,7 +209,7 @@ def file_ok(file_path):
     return True
 
 
-def current_sample_ok(num_samples, output_dir, img_basename):
+def current_sample_ok(num_prompts, num_samples, output_dir, img_basename):
     image_path = os.path.join(output_dir, f"{img_basename}_color.png")
     if not file_ok(image_path):
         print(f"image_path {image_path} not ok")
@@ -226,7 +226,7 @@ def current_sample_ok(num_samples, output_dir, img_basename):
     if not file_ok(org_mask_image_path):
         print(f"org_mask_image_path {org_mask_image_path} not ok")
         return False
-    for prompt_idx in range(8):
+    for prompt_idx in range(num_prompts):
         for i in range(num_samples):
             res_img_path = os.path.join(output_dir, f"{img_basename}_prompt{prompt_idx}_{i}.png")
             if not file_ok(res_img_path):
@@ -269,6 +269,7 @@ def main(args):
         "a plastic mug with label, contains water, on table",
         "a transparent mug with label, contains water, on table",
     ]
+    num_prompts = len(prompts)
 
     # data_root_path = "../data/DREDS/DREDS-CatKnown"
     # splits = ["train", "val", "test"]
@@ -304,7 +305,7 @@ def main(args):
             mask_filename = pair["mask_filename"]
             depth_filename = pair["syn_depth_filename"]
             out_base_filename = color_filename.replace("_color", "").replace(".png", "")
-            if current_sample_ok(args.num_samples, cur_split_output_path, out_base_filename):
+            if current_sample_ok(num_prompts, args.num_samples, cur_split_output_path, out_base_filename):
                 continue
             color_path = os.path.join(cur_split_path, color_filename)
             mask_path = os.path.join(cur_split_path, mask_filename)

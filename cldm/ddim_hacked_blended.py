@@ -3,14 +3,15 @@
 import numpy as np
 import torch
 
-# from tqdm import tqdm
-
 from ldm.modules.diffusionmodules.util import (
     extract_into_tensor,
     make_ddim_sampling_parameters,
     make_ddim_timesteps,
     noise_like,
 )
+
+
+# from tqdm import tqdm
 
 
 class DDIMSampler(object):
@@ -50,7 +51,7 @@ class DDIMSampler(object):
 
         # ddim sampling parameters
         ddim_sigmas, ddim_alphas, ddim_alphas_prev = make_ddim_sampling_parameters(
-            alphacums=alphas_cumprod.cpu(), ddim_timesteps=self.ddim_timesteps, eta=ddim_eta, verbose=verbose
+            alphacums=alphas_cumprod.cpu(), ddim_timesteps=self.ddim_timesteps, eta=ddim_eta, verbose=verbose,
         )
         self.register_buffer("ddim_sigmas", ddim_sigmas)
         self.register_buffer("ddim_alphas", ddim_alphas)
