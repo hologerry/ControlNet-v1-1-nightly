@@ -276,15 +276,15 @@ def main(args):
     data_root_path = "../bot_render_output"
     splits = ["train", "test"]
 
+    all_pair_filenames_json = os.path.join(data_root_path, f"bot_render_bottle_pair_filenames.json")
+    with open(all_pair_filenames_json, "r") as f:
+        data_dict = json.load(f)
+
     if args.debug:
         # splits = ["val"]
         splits = ["test"]
 
     for split in splits:
-        pair_filenames_json = os.path.join(data_root_path, f"bot_render_{split}_bottle_pair_filenames.json")
-        with open(pair_filenames_json, "r") as f:
-            data_dict = json.load(f)
-
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
         cur_split_output_path = os.path.join(
             data_root_path, f"{split}_bc_bottle_dial{args.dilation_radius}_seed{args.seed}"
@@ -351,7 +351,14 @@ def main(args):
                     percentage_of_pixel_blending=args.percentage_of_pixel_blending,
                 )
                 save_samples(
-                    init_image, depth_image, mask, org_mask, prompt_idx, results, cur_split_output_path, out_base_filename
+                    init_image,
+                    depth_image,
+                    mask,
+                    org_mask,
+                    prompt_idx,
+                    results,
+                    cur_split_output_path,
+                    out_base_filename,
                 )
 
 
