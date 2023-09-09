@@ -17,7 +17,7 @@ def one_job_process(args):
     for gpu_idx in range(args.gpu_num):
         cmd = f"export CUDA_VISIBLE_DEVICES={gpu_idx%available_gpus} && python bot_render_mask_bottle.py"
         cmd += f" --seed {args.seed}"
-        cmd += f" --dilation_radius {args.dilation_radius}"
+        # cmd += f" --dilation_radius {args.dilation_radius}"
         cmd += f" --job_idx {args.job_idx} --job_num {args.job_num} --gpu_idx {gpu_idx} --gpu_num {args.gpu_num}"
         if args.sub_job_num > 0:
             cmd += f" --sub_job_idx {args.sub_job_idx} --sub_job_num {args.sub_job_num}"
@@ -32,7 +32,7 @@ def one_job_process(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--seed", type=int, default=12345)
-    parser.add_argument("--dilation_radius", type=int, default=1)
+    # parser.add_argument("--dilation_radius", type=int, default=1)
 
     parser.add_argument("--job_idx", type=int, default=0)
     parser.add_argument("--job_num", type=int, default=1)
