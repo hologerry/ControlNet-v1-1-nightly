@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 import config
 
-from annotator.zoe import ZoeDetector
 from annotator.util import HWC3, resize_image
+from annotator.zoe import ZoeDetector
 from cldm.ddim_hacked import DDIMSampler
 from cldm.model import create_model, load_state_dict
 from share import *
@@ -201,9 +201,6 @@ def main(args):
     ]
     num_prompts = len(prompts)
 
-    # data_root_path = "../data/DREDS/DREDS-CatKnown"
-    # splits = ["train", "val", "test"]
-    # pair_filenames_json = os.path.join(data_root_path, "dreds_mug_pair_filenames.json")
     data_root_path = "../bot_render_output"
     splits = ["train", "test"]
 

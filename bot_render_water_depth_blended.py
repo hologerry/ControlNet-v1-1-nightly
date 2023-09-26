@@ -15,11 +15,24 @@ from tqdm import tqdm
 
 import config
 
-from annotator.oneformer import OneformerCOCODetector
-from annotator.util import HWC3, resize_image
-from cldm.ddim_hacked import DDIMSampler
+from annotator.util import HWC3
+from cldm.ddim_hacked_blended import DDIMSampler
 from cldm.model import create_model, load_state_dict
 from share import *
+
+
+def normalize_depth(depth):
+    depth_norm = np.copy(depth)
+    depth_norm = depth_norm / 1000.0
+    vmin = np.percentile(depth_norm, 2)
+    vmax = np.percentile(depth_norm, 85)
+
+    depth_norm -= vmin
+    depth_norm /= vmax - vmin
+    depth_norm = 1.0 - depth_norm
+    depth_image = (depth_norm * 255.0).clip(0, 255).astype(np.uint8)
+
+    return depth_image
 
 
 def read_image(img_path: str, dest_size=(512, 512)):
@@ -30,16 +43,52 @@ def read_image(img_path: str, dest_size=(512, 512)):
         image = cv2.resize(image, dest_size, interpolation=cv2.INTER_AREA)
     elif w < dest_size[0] or h < dest_size[1]:
         image = cv2.resize(image, dest_size, interpolation=cv2.INTER_CUBIC)
+    image = image.astype(np.float32) / 255.0
+    image = image[None].transpose(0, 3, 1, 2)
+    image = torch.from_numpy(image).cuda()
+
+    image = image * 2.0 - 1.0
 
     return image
+
+
+def read_mask(mask_path: str, dilation_radius: int = 0, dest_size=(64, 64), img_size=(512, 512)):
+    org_mask = Image.open(mask_path).convert("L")
+    mask = org_mask.copy()
+    w, h = mask.size
+    if w != dest_size[0] or h != dest_size[1]:
+        mask = mask.resize(dest_size, Image.NEAREST)
+    mask = np.array(mask) / 255
+
+    if dilation_radius > 0:
+        k_size = 1 + 2 * dilation_radius
+        masks_array = [binary_dilation(mask, structure=np.ones((k_size, k_size)))]
+    else:
+        masks_array = [mask]
+    masks_array = np.array(masks_array).astype(np.float32)
+    masks_array = masks_array[:, np.newaxis, :]
+    masks_array = torch.from_numpy(masks_array).cuda()
+
+    if w != img_size[0] or h != img_size[1]:
+        org_mask = org_mask.resize(img_size, Image.NEAREST)
+
+    org_mask = np.array(org_mask).astype(np.float32) / 255.0
+    org_mask = org_mask[None, None]
+    org_mask[org_mask < 0.5] = 0
+    org_mask[org_mask >= 0.5] = 1
+    org_mask = torch.from_numpy(org_mask).cuda()
+
+    return masks_array, org_mask
 
 
 @torch.no_grad()
 def one_image_batch(
     model,
     ddim_sampler,
-    image,
-    detected_map,
+    init_image,
+    depth,
+    mask,
+    org_mask,
     num_samples,
     ddim_steps,
     guess_mode,
@@ -51,8 +100,16 @@ def one_image_batch(
     a_prompt,
     n_prompt,
     config,
+    skip_steps,
+    percentage_of_pixel_blending,
 ):
-    H, W, C = image.shape
+    init_image_batch = torch.cat([init_image for _ in range(num_samples)], dim=0)
+    mask_batch = torch.cat([mask for _ in range(num_samples)], dim=0)
+    org_mask_batch = torch.cat([org_mask for _ in range(num_samples)], dim=0)
+    H, W = init_image.shape[2:]
+
+    detected_map = HWC3(depth)
+    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_NEAREST)
     control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
     control = torch.stack([control for _ in range(num_samples)], dim=0)
     control = einops.rearrange(control, "b h w c -> b c h w").clone()
@@ -87,10 +144,15 @@ def one_image_batch(
         num_samples,
         shape,
         cond,
+        mask=mask_batch,
+        org_mask=org_mask_batch,
+        init_image=init_image_batch,
         verbose=False,
         eta=eta,
         unconditional_guidance_scale=scale,
         unconditional_conditioning=un_cond,
+        skip_steps=skip_steps,
+        percentage_of_pixel_blending=percentage_of_pixel_blending,
     )
 
     if config.save_memory:
@@ -106,20 +168,30 @@ def one_image_batch(
     return results
 
 
-def save_samples(init_image, detected_map, num_prompts, prompt_idx, results, output_dir, img_basename):
+def save_samples(init_image, depth, mask, org_mask, prompt_idx, results, output_dir, img_basename):
     # the img_basename contains the subfolder name
     true_dir = os.path.dirname(os.path.join(output_dir, img_basename))
     os.makedirs(true_dir, exist_ok=True)
     if prompt_idx == 0:
         # save the input only once
-        # image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
-        # image = image.clip(0, 255).astype(np.uint8)
-        image = cv2.cvtColor(init_image, cv2.COLOR_RGB2BGR)
+        image = init_image[0].permute(1, 2, 0).cpu().numpy() * 127.5 + 127.5
+        image = image.clip(0, 255).astype(np.uint8)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        detected = cv2.cvtColor(detected_map, cv2.COLOR_RGB2BGR)
+        mask_image = mask[0].permute(1, 2, 0).cpu().numpy() * 255
+        mask_image = mask_image.clip(0, 255).astype(np.uint8)
+        mask_image = cv2.cvtColor(mask_image, cv2.COLOR_GRAY2BGR)
+
+        org_mask_image = org_mask[0].permute(1, 2, 0).cpu().numpy() * 255
+        org_mask_image = org_mask_image.clip(0, 255).astype(np.uint8)
+        org_mask_image = cv2.cvtColor(org_mask_image, cv2.COLOR_GRAY2BGR)
+
+        depth = cv2.cvtColor(depth, cv2.COLOR_GRAY2BGR)
 
         cv2.imwrite(os.path.join(output_dir, f"{img_basename}_color.png"), image)
-        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_det_mask.png"), detected)
+        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_norm_depth.png"), depth)
+        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_mask.png"), mask_image)
+        cv2.imwrite(os.path.join(output_dir, f"{img_basename}_org_mask.png"), org_mask_image)
 
     for i, result in enumerate(results):
         img = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
@@ -142,18 +214,18 @@ def current_sample_ok(num_prompts, num_samples, output_dir, img_basename):
     if not file_ok(image_path):
         print(f"image_path {image_path} not ok")
         return False
-    # depth_path = os.path.join(output_dir, f"{img_basename}_norm_depth.png")
-    # if not file_ok(depth_path):
-    #     print(f"depth_path {depth_path} not ok")
-    #     return False
-    # mask_image_path = os.path.join(output_dir, f"{img_basename}_mask.png")
-    # if not file_ok(mask_image_path):
-    #     print(f"mask_image_path {mask_image_path} not ok")
-    #     return False
-    # org_mask_image_path = os.path.join(output_dir, f"{img_basename}_org_mask.png")
-    # if not file_ok(org_mask_image_path):
-    #     print(f"org_mask_image_path {org_mask_image_path} not ok")
-    #     return False
+    depth_path = os.path.join(output_dir, f"{img_basename}_norm_depth.png")
+    if not file_ok(depth_path):
+        print(f"depth_path {depth_path} not ok")
+        return False
+    mask_image_path = os.path.join(output_dir, f"{img_basename}_mask.png")
+    if not file_ok(mask_image_path):
+        print(f"mask_image_path {mask_image_path} not ok")
+        return False
+    org_mask_image_path = os.path.join(output_dir, f"{img_basename}_org_mask.png")
+    if not file_ok(org_mask_image_path):
+        print(f"org_mask_image_path {org_mask_image_path} not ok")
+        return False
     for prompt_idx in range(num_prompts):
         for i in range(num_samples):
             res_img_path = os.path.join(output_dir, f"{img_basename}_prompt{prompt_idx}_{i}.png")
@@ -187,35 +259,59 @@ def main(args):
 
     ddim_sampler = DDIMSampler(model)
 
-    preprocessor = OneformerCOCODetector()
-
-    prompts = [
-        "a bottle on table",
-        "a glass bottle on table",
-        "a plastic bottle on table",
-        "a transparent bottle on table",
-        # "a bottle with label and cap, contains water, on table",
-        # "a glass bottle with label and cap, contains water, on table",
-        # "a plastic bottle with label and cap, contains water, on table",
-        # "a transparent bottle with label and cap, contains water, on table",
+    water_prompts = [
+        "a mug with pure water",
+        "pure water in a mug",
+        "a mug with coffee",
+        "caffe latte in a mug",
+        "a mug with tea",
+        "tea in a mug",
+        "a mug with milk",
+        "milk in a mug",
+        # "a mug with hot chocolate",
+        # "hot chocolate in a mug",
+        # "a mug with cocoa",
+        # "cocoa in a mug",
+        # "a mug with hot water",
+        # "hot water in a mug",
+        # "a mug with cold water",
+        # "cold water in a mug",
+        # "a mug with warm water",
+        # "warm water in a mug",
+        # "a mug with ice water",
+        # "ice water in a mug",
     ]
-    num_prompts = len(prompts)
+    mug_prompts = [
+        "a mug on table",
+        "a glass mug on table",
+        "a plastic mug on table",
+        "a transparent mug on table",
+        "a mug with label, contains water, on table",
+        "a glass mug with label, contains water, on table",
+        "a plastic mug with label, contains water, on table",
+        "a transparent mug with label, contains water, on table",
+    ]
+    num_prompts = min(len(water_prompts), len(mug_prompts))
 
-    data_root_path = "../bot_render_output"
+    data_root_path = "../bot_render_water_camera_output"
     splits = ["train", "test"]
 
-    all_pair_filenames_json = os.path.join(data_root_path, f"bot_render_bottle_pair_filenames.json")
+    all_pair_filenames_json = os.path.join(data_root_path, f"bot_render_water_camera_all_pair_filenames.json")
     with open(all_pair_filenames_json, "r") as f:
         data_dict = json.load(f)
 
     if args.debug:
-        # splits = ["val"]
         splits = ["test"]
 
     for split in splits:
         cur_split_path = os.path.join(data_root_path, f"{split}_pair")
-        cur_split_output_path = os.path.join(data_root_path, f"{split}_bc_bottle_mask_seed{args.seed}")
+        cur_split_output_path = os.path.join(
+            data_root_path, f"{split}_bc_water_dial{args.dilation_radius}_seed{args.seed}"
+        )
         cur_split_pairs = data_dict[split]
+
+        if args.debug:
+            cur_split_pairs = cur_split_pairs[:100]
 
         cur_job_pairs = cur_split_pairs[args.part_idx :: args.part_num]
         if args.sub_job_num > 0:
@@ -227,49 +323,53 @@ def main(args):
         for pair in tqdm(cur_job_pairs, desc=desc_str):
             # filename already contains the subfolder name
             color_filename = pair["color_filename"]
-            # mask_filename = pair["mask_filename"]
-
-            # depth_filename = pair["syn_depth_filename"]
+            mask_filename = pair["mask_filename"]
+            maskwater_filename = pair["maskwater_filename"]
+            depth_filename = pair["syn_depth_filename"]
             out_base_filename = color_filename.replace("_color", "").replace(".png", "")
             if current_sample_ok(num_prompts, args.num_samples, cur_split_output_path, out_base_filename):
                 continue
             color_path = os.path.join(cur_split_path, color_filename)
-            # mask_path = os.path.join(cur_split_path, mask_filename)
-            # depth_path = os.path.join(cur_split_path, depth_filename)
+            mask_path = os.path.join(cur_split_path, mask_filename)
+            maskwater_path = os.path.join(cur_split_path, maskwater_filename)
+            depth_path = os.path.join(cur_split_path, depth_filename)
             if not os.path.exists(color_path) or os.path.getsize(color_path) == 0:
                 print(f"pair color_path {color_path} not ok")
                 continue
-            # if not os.path.exists(mask_path) or os.path.getsize(mask_path) == 0:
-            #     print(f"pair mask_path {mask_path} not ok")
-            #     continue
-            # if not os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
-            #     print(f"pair depth_path {depth_path} not ok")
-            #     continue
+            if not os.path.exists(mask_path) or os.path.getsize(mask_path) == 0:
+                print(f"pair mask_path {mask_path} not ok")
+                continue
+            if not os.path.exists(maskwater_path) or os.path.getsize(maskwater_path) == 0:
+                print(f"pair maskwater_path {maskwater_path} not ok")
+                continue
+            if not os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
+                print(f"pair depth_path {depth_path} not ok")
+                continue
 
             init_image = read_image(color_path)
+            mask, org_mask = read_mask(mask_path, args.dilation_radius)
+            water_mask, org_water_mask = read_mask(maskwater_path, args.dilation_radius)
 
-            input_image = HWC3(init_image)
-            detected_map = preprocessor(resize_image(input_image, 512))
-            detected_map = HWC3(detected_map)
+            if torch.sum(org_water_mask) > 0:
+                mask = water_mask
+                org_mask = org_water_mask
+                prompts = water_prompts
+            else:
+                prompts = mug_prompts
 
-            img = resize_image(input_image, 512)
-            H, W, C = img.shape
-
-            detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
-
-            # mask, org_mask = read_mask(mask_path, args.dilation_radius)
-
-            # depth_path = os.path.join(depth_path)
-            # depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)  # 16bit, millimeters
-            # depth_image = normalize_depth(depth)
+            depth_path = os.path.join(depth_path)
+            depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)  # 16bit, millimeters
+            depth_image = normalize_depth(depth)
 
             for prompt_idx in range(len(prompts)):
                 cur_prompt = prompts[prompt_idx]
                 results = one_image_batch(
                     model=model,
                     ddim_sampler=ddim_sampler,
-                    image=img,
-                    detected_map=detected_map,
+                    init_image=init_image,
+                    depth=depth_image,
+                    mask=mask,
+                    org_mask=org_mask,
                     num_samples=args.num_samples,
                     ddim_steps=20,
                     guess_mode=False,
@@ -281,11 +381,14 @@ def main(args):
                     a_prompt="best quality",
                     n_prompt="lowres, bad anatomy, bad hands, cropped, worst quality",
                     config=config,
+                    skip_steps=0,
+                    percentage_of_pixel_blending=args.percentage_of_pixel_blending,
                 )
                 save_samples(
                     init_image,
-                    detected_map,
-                    num_prompts,
+                    depth_image,
+                    mask,
+                    org_mask,
                     prompt_idx,
                     results,
                     cur_split_output_path,
@@ -299,11 +402,10 @@ if __name__ == "__main__":
     parser.add_argument("--sd", type=str, default="15")
     parser.add_argument("--zoe", action="store_true", default=False)
 
-    # parser.add_argument("--dilation_radius", type=int, default=1)
-    # parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
+    parser.add_argument("--dilation_radius", type=int, default=1)
+    parser.add_argument("--percentage_of_pixel_blending", type=float, default=0.0)
 
     parser.add_argument("--num_samples", type=int, default=4)
-
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--debug", action="store_true", default=False)
 

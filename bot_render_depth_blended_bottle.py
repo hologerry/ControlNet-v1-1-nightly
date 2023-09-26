@@ -271,9 +271,6 @@ def main(args):
     ]
     num_prompts = len(prompts)
 
-    # data_root_path = "../data/DREDS/DREDS-CatKnown"
-    # splits = ["train", "val", "test"]
-    # pair_filenames_json = os.path.join(data_root_path, "dreds_mug_pair_filenames.json")
     data_root_path = "../bot_render_output"
     splits = ["train", "test"]
 
