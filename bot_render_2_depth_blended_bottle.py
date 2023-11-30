@@ -271,7 +271,7 @@ def main(args):
     ]
     num_prompts = len(prompts)
 
-    data_root_path = "/tmp/bot_render_output_2"
+    data_root_path = "../bot_render_output_2"
     splits = ["train", "test"]
 
     if args.debug:
