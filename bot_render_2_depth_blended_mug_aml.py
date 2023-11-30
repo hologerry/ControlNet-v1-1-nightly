@@ -16,6 +16,7 @@ def one_job_process(args):
     cmds = []
     for gpu_idx in range(args.gpu_num):
         cmd = f"export CUDA_VISIBLE_DEVICES={gpu_idx%available_gpus} && python bot_render_2_depth_blended_mug.py"
+        cmd += f" --data_root {args.data_root}"
         cmd += f" --seed {args.seed}"
         cmd += f" --dilation_radius {args.dilation_radius}"
         cmd += f" --job_idx {args.job_idx} --job_num {args.job_num} --gpu_idx {gpu_idx} --gpu_num {args.gpu_num}"
@@ -33,6 +34,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--dilation_radius", type=int, default=1)
+    parser.add_argument("--data_root", type=str, default="/tmp/bot_render_output_2")
 
     parser.add_argument("--job_idx", type=int, default=0)
     parser.add_argument("--job_num", type=int, default=1)

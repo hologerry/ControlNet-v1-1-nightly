@@ -271,7 +271,7 @@ def main(args):
     ]
     num_prompts = len(prompts)
 
-    data_root_path = "/tmp/bot_render_output_2"
+    data_root_path = args.data_root
     splits = ["train", "test"]
 
     if args.debug:
@@ -383,6 +383,8 @@ if __name__ == "__main__":
     parser.add_argument("--part_num", type=int, default=1)
     parser.add_argument("--sub_job_idx", type=int, default=-1)
     parser.add_argument("--sub_job_num", type=int, default=-1)
+
+    parser.add_argument("--data_root", type=str, default="/tmp/bot_render_output_2")
 
     args = parser.parse_args()
 

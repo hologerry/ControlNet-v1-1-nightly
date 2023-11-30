@@ -383,6 +383,8 @@ if __name__ == "__main__":
     parser.add_argument("--sub_job_idx", type=int, default=-1)
     parser.add_argument("--sub_job_num", type=int, default=-1)
 
+    parser.add_argument("--data_root", type=str, default="/tmp/bot_render_output_2")
+
     args = parser.parse_args()
 
     assert args.job_idx < args.job_num
